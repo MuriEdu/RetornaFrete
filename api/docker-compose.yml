@@ -1,0 +1,35 @@
+services:
+  api:
+    build:
+      context: .
+    container_name: retorna-frete-fastapi
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  db:
+    image: postgres:16-alpine
+    container_name: retorna-frete-fastapi-db
+    environment:
+      POSTGRES_DB: retornafrete
+      POSTGRES_USER: retornafrete
+      POSTGRES_PASSWORD: retornafrete
+    ports:
+      - "5433:5432"
+    volumes:
+      - retorna_frete_api_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retornafrete -d retornafrete"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  retorna_frete_api_pgdata:
