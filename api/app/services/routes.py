@@ -2,12 +2,13 @@ import math
 import unicodedata
 
 import httpx
+from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
 from app.database import SessionLocal
-from app.schemas import RouteCity
+from app.schemas import RouteCalculationResponse, RouteCity
 
 
 def _distance_km(point_a: tuple[float, float], point_b: tuple[float, float]) -> float:
@@ -48,6 +49,11 @@ def _sample_route_points(points: list[tuple[float, float]], step_km: float, max_
             sampled.append(points[-1])
 
     return sampled
+
+
+def _normalize_city_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value.strip().lower())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
 def _split_city_name(value: str | None, default_name: str) -> tuple[str, str]:
@@ -143,36 +149,96 @@ def _load_cities_with_centroid() -> list[RouteCity]:
     ]
 
 
-async def _fetch_route_points(
-    client: httpx.AsyncClient, origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float
-) -> list[tuple[float, float]]:
-    coordinates = f"{origin_lon},{origin_lat};{dest_lon},{dest_lat}"
-    if settings.mapbox_token:
+async def _forward_geocode_mapbox(client: httpx.AsyncClient, city_name: str) -> tuple[float, float]:
+    try:
         response = await client.get(
-            f"{settings.mapbox_directions_url}/{coordinates}",
+            "https://api.mapbox.com/search/geocode/v6/forward",
             params={
-                "geometries": "geojson",
-                "overview": "full",
+                "q": city_name,
                 "access_token": settings.mapbox_token,
+                "country": "br",
+                "language": "pt",
+                "types": "place,locality,district,region",
+                "limit": 1,
             },
-            timeout=30.0,
+            timeout=20.0,
         )
         response.raise_for_status()
-        routes = response.json().get("routes", [])
-    else:
-        response = await client.get(
-            f"{settings.osrm_directions_url}/{coordinates}",
-            params={"geometries": "geojson", "overview": "full"},
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        routes = payload.get("routes", []) if payload.get("code") == "Ok" else []
+        feature = (response.json().get("features") or [None])[0]
+        coordinates = feature.get("geometry", {}).get("coordinates") if feature else None
+        if not coordinates or len(coordinates) < 2:
+            raise HTTPException(status_code=404, detail=f"City not found: {city_name}")
+        return float(coordinates[1]), float(coordinates[0])
+    except httpx.HTTPError:
+        return await _forward_geocode_nominatim(client, city_name)
+
+
+async def _forward_geocode_nominatim(client: httpx.AsyncClient, city_name: str) -> tuple[float, float]:
+    response = await client.get(
+        settings.nominatim_search_url,
+        params={"q": city_name, "format": "jsonv2", "limit": 1, "countrycodes": "br"},
+        headers={"User-Agent": settings.nominatim_user_agent},
+        timeout=20.0,
+    )
+    response.raise_for_status()
+    results = response.json()
+    if not results:
+        raise HTTPException(status_code=404, detail=f"City not found: {city_name}")
+    return float(results[0]["lat"]), float(results[0]["lon"])
+
+
+async def _resolve_point(
+    client: httpx.AsyncClient,
+    city_name: str | None,
+    lat: float | None,
+    lon: float | None,
+) -> tuple[float, float]:
+    if lat is not None and lon is not None:
+        return lat, lon
+    if not city_name:
+        raise HTTPException(status_code=400, detail="Origin and destination must include either coordinates or city names")
+    if settings.mapbox_token:
+        return await _forward_geocode_mapbox(client, city_name)
+    return await _forward_geocode_nominatim(client, city_name)
+
+
+async def _fetch_route_geometry(
+    client: httpx.AsyncClient, origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float
+) -> list[list[float]]:
+    coordinates = f"{origin_lon},{origin_lat};{dest_lon},{dest_lat}"
+    fallback_route = [[origin_lon, origin_lat], [dest_lon, dest_lat]]
+
+    try:
+        if settings.mapbox_token:
+            response = await client.get(
+                f"{settings.mapbox_directions_url}/{coordinates}",
+                params={
+                    "geometries": "geojson",
+                    "overview": "full",
+                    "access_token": settings.mapbox_token,
+                },
+                timeout=20.0,
+            )
+            response.raise_for_status()
+            routes = response.json().get("routes", [])
+        else:
+            response = await client.get(
+                f"{settings.osrm_directions_url}/{coordinates}",
+                params={"geometries": "geojson", "overview": "full"},
+                timeout=20.0,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            routes = payload.get("routes", []) if payload.get("code") == "Ok" else []
+    except httpx.HTTPError:
+        return fallback_route
 
     if not routes:
-        return []
-    raw_points = routes[0].get("geometry", {}).get("coordinates", [])
-    return [(point[1], point[0]) for point in raw_points if len(point) >= 2]
+        return fallback_route
+
+    geometry = routes[0].get("geometry", {})
+    route_coordinates = geometry.get("coordinates") or []
+    return route_coordinates or fallback_route
 
 
 def _find_cities_near_route(
@@ -240,30 +306,55 @@ def _find_cities_near_route(
     return unique
 
 
-async def get_cities_along_route(
-    origin_lat: float,
-    origin_lon: float,
-    dest_lat: float,
-    dest_lon: float,
+async def calculate_route(
     origin_name: str | None,
     dest_name: str | None,
-) -> list[RouteCity]:
-    candidate_cities = _load_cities_with_centroid()
-    if not candidate_cities:
-        return _fallback_cities(origin_name, dest_name, origin_lat, origin_lon, dest_lat, dest_lon)
-
+    origin_lat: float | None,
+    origin_lon: float | None,
+    dest_lat: float | None,
+    dest_lon: float | None,
+) -> RouteCalculationResponse:
     async with httpx.AsyncClient() as client:
-        route_points = await _fetch_route_points(client, origin_lat, origin_lon, dest_lat, dest_lon)
+        resolved_origin_lat, resolved_origin_lon = await _resolve_point(client, origin_name, origin_lat, origin_lon)
+        resolved_dest_lat, resolved_dest_lon = await _resolve_point(client, dest_name, dest_lat, dest_lon)
+        route_coordinates = await _fetch_route_geometry(
+            client,
+            resolved_origin_lat,
+            resolved_origin_lon,
+            resolved_dest_lat,
+            resolved_dest_lon,
+        )
 
-    if not route_points:
-        return _fallback_cities(origin_name, dest_name, origin_lat, origin_lon, dest_lat, dest_lon)
+    route_points = [(point[1], point[0]) for point in route_coordinates if len(point) >= 2]
+    candidate_cities = _load_cities_with_centroid()
+    if candidate_cities:
+        cities = _find_cities_near_route(route_points, candidate_cities)
+        cities = _merge_endpoints(
+            cities,
+            origin_name,
+            dest_name,
+            resolved_origin_lat,
+            resolved_origin_lon,
+            resolved_dest_lat,
+            resolved_dest_lon,
+        )
+    else:
+        cities = _fallback_cities(
+            origin_name,
+            dest_name,
+            resolved_origin_lat,
+            resolved_origin_lon,
+            resolved_dest_lat,
+            resolved_dest_lon,
+        )
 
-    cities = _find_cities_near_route(route_points, candidate_cities)
-    merged = _merge_endpoints(cities, origin_name, dest_name, origin_lat, origin_lon, dest_lat, dest_lon)
-    if len(merged) < 2:
-        return _fallback_cities(origin_name, dest_name, origin_lat, origin_lon, dest_lat, dest_lon)
-    return merged
-def _normalize_city_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value.strip().lower())
-    return "".join(char for char in normalized if not unicodedata.combining(char))
-
+    return RouteCalculationResponse(
+        status="success",
+        count=len(cities),
+        cities=cities,
+        originLat=resolved_origin_lat,
+        originLon=resolved_origin_lon,
+        destLat=resolved_dest_lat,
+        destLon=resolved_dest_lon,
+        routeCoordinates=route_coordinates,
+    )

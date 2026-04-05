@@ -1,4 +1,4 @@
-.PHONY: api-build api-up api-down api-logs api-dev api-shell api-seed-cities api-seed-all ios android start stop build clean dev dev-start dev-stop dev-build
+.PHONY: api-build api-up api-up-no-cache api-down api-logs api-dev api-shell api-seed-cities api-seed-all api-clean-db ios android
 
 api-build:
 	docker compose -f api/docker-compose.yml build
@@ -6,8 +6,15 @@ api-build:
 api-up:
 	docker compose -f api/docker-compose.yml up -d
 
+api-up-no-cache:
+	docker compose -f api/docker-compose.yml build --no-cache
+	docker compose -f api/docker-compose.yml up -d
+
 api-down:
 	docker compose -f api/docker-compose.yml down
+
+api-clean-db:
+	docker compose -f api/docker-compose.yml down -v
 
 api-logs:
 	docker compose -f api/docker-compose.yml logs -f api
@@ -29,27 +36,3 @@ ios:
 
 android:
 	cd mobile && npm install && npm run android
-
-start:
-	docker-compose -f backend/docker-compose.yaml up -d
-
-stop:
-	docker-compose -f backend/docker-compose.yaml down
-
-build:
-	docker-compose -f backend/docker-compose.yaml build
-
-clean:
-	docker-compose -f backend/docker--compose.yaml down -v --rmi all
-	docker system prune -a -f
-
-dev: dev-start
-
-dev-start:
-	docker-compose -f backend/docker-compose.dev.yaml up
-
-dev-stop:
-	docker-compose -f backend/docker-compose.dev.yaml down
-
-dev-build:
-	docker-compose -f backend/docker-compose.dev.yaml build

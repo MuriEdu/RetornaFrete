@@ -37,6 +37,10 @@ class Settings(BaseSettings):
         default="https://nominatim.openstreetmap.org/reverse",
         validation_alias="NOMINATIM_REVERSE_URL",
     )
+    nominatim_search_url: str = Field(
+        default="https://nominatim.openstreetmap.org/search",
+        validation_alias="NOMINATIM_SEARCH_URL",
+    )
     nominatim_user_agent: str = Field(
         default="retorna-frete-fastapi/1.0",
         validation_alias="NOMINATIM_USER_AGENT",

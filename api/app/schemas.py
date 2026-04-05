@@ -102,10 +102,10 @@ class CargoCreateRequest(BaseModel):
 
 
 class RouteRequest(BaseModel):
-    originLat: float
-    originLon: float
-    destLat: float
-    destLon: float
+    originLat: float | None = None
+    originLon: float | None = None
+    destLat: float | None = None
+    destLon: float | None = None
     originCityName: str | None = None
     destCityName: str | None = None
 
@@ -121,6 +121,11 @@ class RouteCalculationResponse(BaseModel):
     status: str
     count: int
     cities: list[RouteCity]
+    originLat: float
+    originLon: float
+    destLat: float
+    destLon: float
+    routeCoordinates: list[list[float]]
 
 
 class VehicleNested(BaseModel):
