@@ -44,6 +44,15 @@ class CargoStatus(str, enum.Enum):
     CANCELED = "CANCELED"
 
 
+class FreightPaymentStatus(str, enum.Enum):
+    AWAITING_PAYMENT = "AWAITING_PAYMENT"
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    RELEASED = "RELEASED"
+    FAILED = "FAILED"
+    CANCELED = "CANCELED"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -168,6 +177,7 @@ class Proposal(Base):
     created_by: Mapped["User"] = relationship(foreign_keys=[created_by_id])
     current_bidder: Mapped["User"] = relationship(foreign_keys=[current_bidder_id])
     bids: Mapped[list["ProposalBid"]] = relationship(back_populates="proposal", cascade="all, delete-orphan", order_by="ProposalBid.created_at")
+    payment: Mapped["ProposalPayment | None"] = relationship(back_populates="proposal", cascade="all, delete-orphan", uselist=False)
 
 
 class ProposalBid(Base):
@@ -181,3 +191,31 @@ class ProposalBid(Base):
 
     proposal: Mapped["Proposal"] = relationship(back_populates="bids")
     bidder: Mapped["User"] = relationship()
+
+
+class ProposalPayment(Base):
+    __tablename__ = "proposal_payments"
+
+    id: Mapped[uuid.UUID] = uuid_column()
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"), nullable=False, unique=True, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    status: Mapped[FreightPaymentStatus] = mapped_column(
+        Enum(FreightPaymentStatus),
+        default=FreightPaymentStatus.AWAITING_PAYMENT,
+        nullable=False,
+    )
+    delivery_code: Mapped[str] = mapped_column(String(8), nullable=False)
+    mercado_pago_external_reference: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    mercado_pago_preference_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    mercado_pago_checkout_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mercado_pago_sandbox_checkout_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mercado_pago_payment_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    mercado_pago_payment_status: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    mercado_pago_status_detail: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    proposal: Mapped["Proposal"] = relationship(back_populates="payment")

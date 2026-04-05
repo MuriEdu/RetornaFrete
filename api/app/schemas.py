@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models import AccountStatus, CargoStatus, ProposalStatus, Role, TripStatus
+from app.models import AccountStatus, CargoStatus, FreightPaymentStatus, ProposalStatus, Role, TripStatus
 
 
 class ORMModel(BaseModel):
@@ -209,6 +209,27 @@ class BidHistoryResponse(BaseModel):
     createdAt: datetime
 
 
+class ProposalPaymentSummaryResponse(BaseModel):
+    amount: float
+    status: FreightPaymentStatus
+    provider: str
+    providerStatus: str | None = None
+    paidAt: datetime | None = None
+    releasedAt: datetime | None = None
+    deliveryCodeHint: str
+
+
+class ProposalPaymentDetailsResponse(ProposalPaymentSummaryResponse):
+    checkoutUrl: str | None = None
+    sandboxCheckoutUrl: str | None = None
+    deliveryCode: str | None = None
+    lastError: str | None = None
+
+
+class ConfirmDeliveryCodeRequest(BaseModel):
+    deliveryCode: str = Field(min_length=4, max_length=8)
+
+
 class ProposalResponse(BaseModel):
     id: uuid.UUID
     cargoId: uuid.UUID
@@ -226,3 +247,4 @@ class ProposalResponse(BaseModel):
     weightKg: float
     tripDate: date
     bidHistory: list[BidHistoryResponse]
+    payment: ProposalPaymentSummaryResponse | None = None

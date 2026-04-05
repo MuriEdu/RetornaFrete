@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine
-from app.routers import cargos, matches, notifications, proposals, routes, trips, users, vehicles
+from app.routers import cargos, matches, notifications, payments, proposals, routes, trips, users, vehicles
 from app.seed import seed_vehicle_types
 
 app = FastAPI(title=settings.app_name)
@@ -36,4 +36,5 @@ app.include_router(cargos.router)
 app.include_router(routes.router)
 app.include_router(matches.router)
 app.include_router(proposals.router)
+app.include_router(payments.router)
 app.include_router(notifications.router)
