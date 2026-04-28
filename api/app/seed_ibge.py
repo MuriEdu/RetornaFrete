@@ -3,7 +3,7 @@ from collections.abc import Iterable
 import httpx
 from sqlalchemy import text
 
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal
 
 IBGE_MUNICIPIOS_URL = "https://servicodados.ibge.gov.br/api/v1/localidades/municipios"
 IBGE_ESTADOS_URL = "https://servicodados.ibge.gov.br/api/v1/localidades/estados"
@@ -122,7 +122,6 @@ def _ensure_columns_exist() -> None:
 
 
 def seed_ibge_municipios() -> int:
-    Base.metadata.create_all(bind=engine)
     _ensure_columns_exist()
 
     municipios = _fetch_municipios_base()

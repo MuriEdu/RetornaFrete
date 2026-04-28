@@ -1,6 +1,7 @@
 import secrets
 from datetime import datetime
 from decimal import Decimal
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 from fastapi import HTTPException
@@ -72,6 +73,15 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return None
 
 
+def _append_query_params(url: str, **params: str) -> str:
+    if not url:
+        return url
+    parsed = urlparse(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query.update({key: value for key, value in params.items() if value})
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
 def _apply_payment_payload(payment: ProposalPayment, payload: dict) -> ProposalPayment:
     payment_id = payload.get("id")
     status = payload.get("status")
@@ -95,6 +105,8 @@ def _apply_payment_payload(payment: ProposalPayment, payload: dict) -> ProposalP
 
 async def create_checkout_preference(payment: ProposalPayment, proposal: Proposal, payer_email: str) -> ProposalPayment:
     notification_url = settings.mercado_pago_notification_url.strip() or None
+    if notification_url and settings.mercado_pago_webhook_secret.strip():
+        notification_url = _append_query_params(notification_url, secret=settings.mercado_pago_webhook_secret.strip())
     body: dict = {
         "external_reference": payment.mercado_pago_external_reference,
         "notification_url": notification_url,
@@ -117,9 +129,9 @@ async def create_checkout_preference(payment: ProposalPayment, proposal: Proposa
     }
 
     back_urls = {
-        "success": settings.mercado_pago_success_url.strip(),
-        "pending": settings.mercado_pago_pending_url.strip(),
-        "failure": settings.mercado_pago_failure_url.strip(),
+        "success": _append_query_params(settings.mercado_pago_success_url.strip(), proposalId=str(proposal.id)),
+        "pending": _append_query_params(settings.mercado_pago_pending_url.strip(), proposalId=str(proposal.id)),
+        "failure": _append_query_params(settings.mercado_pago_failure_url.strip(), proposalId=str(proposal.id)),
     }
     filtered_back_urls = {key: value for key, value in back_urls.items() if value}
     if filtered_back_urls:

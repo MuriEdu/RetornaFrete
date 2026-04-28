@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
@@ -102,7 +103,11 @@ def create_user(payload: CreateUserRequest, db: Session = Depends(get_db)) -> Re
         account_status=AccountStatus.ACTIVE,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Could not create user") from exc
     return Response(status_code=status.HTTP_201_CREATED)
 
 

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.deps import get_db
 from app.routers.proposals import push_proposal_update
 from app.services.payments import sync_payment_from_webhook
@@ -16,6 +17,7 @@ async def mercado_pago_webhook(
     type: str | None = Query(default=None),
     data_id: str | None = Query(default=None, alias="data.id"),
     payment_id: str | None = Query(default=None, alias="id"),
+    secret: str | None = Query(default=None),
 ) -> dict[str, str]:
     event = {}
     try:
@@ -34,6 +36,8 @@ async def mercado_pago_webhook(
         return {"status": "ignored"}
     if not candidate_payment_id:
         return {"status": "ignored"}
+    if settings.mercado_pago_webhook_secret.strip() and secret != settings.mercado_pago_webhook_secret.strip():
+        return {"status": "forbidden"}
 
     payment = await sync_payment_from_webhook(db, candidate_payment_id)
     if not payment:

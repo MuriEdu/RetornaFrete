@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.deps import get_current_user, get_db
-from app.models import Cargo, CargoStatus, Trip, TripStatus, User
+from app.models import Cargo, CargoStatus, Proposal, ProposalStatus, Trip, TripStatus, User
 
 router = APIRouter(prefix="/api/matches", tags=["matches"])
 
@@ -51,6 +51,15 @@ def get_matches(
         if trip.vehicle.type_id != cargo.required_vehicle_type_id:
             continue
         if not is_trip_date_compatible(cargo.trip_date, trip.trip_date, cargo.is_date_flexible):
+            continue
+        existing_proposal = db.scalar(
+            select(Proposal).where(
+                Proposal.cargo_id == cargo.id,
+                Proposal.trip_id == trip.id,
+                Proposal.status.notin_([ProposalStatus.REJECTED, ProposalStatus.CANCELED]),
+            )
+        )
+        if existing_proposal:
             continue
         total = Decimal(trip.price_per_km) * Decimal(str(distance))
         matches.append(

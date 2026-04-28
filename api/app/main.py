@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal
 from app.routers import cargos, matches, notifications, payments, proposals, routes, trips, users, vehicles
 from app.seed import seed_vehicle_types
 
@@ -19,7 +19,6 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
-    Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         seed_vehicle_types(db)
 

@@ -91,6 +91,22 @@ def get_proposal_or_404(db: Session, proposal_id: uuid.UUID) -> Proposal:
     return proposal
 
 
+async def close_competing_proposals(db: Session, accepted_proposal: Proposal) -> None:
+    competing_proposals = db.scalars(
+        select(Proposal).where(
+            Proposal.id != accepted_proposal.id,
+            Proposal.status.in_([ProposalStatus.PENDING, ProposalStatus.UNDER_NEGOTIATION]),
+            (
+                (Proposal.cargo_id == accepted_proposal.cargo_id)
+                | (Proposal.trip_id == accepted_proposal.trip_id)
+            ),
+        )
+    ).all()
+    for proposal in competing_proposals:
+        proposal.status = ProposalStatus.CANCELED
+        await push_proposal_update(proposal)
+
+
 def finalize_acceptance(db: Session, proposal: Proposal) -> None:
     proposal.status = ProposalStatus.ACCEPTED
     proposal.trip.status = TripStatus.MATCHED
@@ -133,6 +149,15 @@ async def create_proposal(
         raise HTTPException(status_code=400, detail="Trip or cargo is not available")
     if not is_trip_date_compatible(cargo.trip_date, trip.trip_date, cargo.is_date_flexible):
         raise HTTPException(status_code=400, detail="Trip date is incompatible with cargo date")
+    existing_proposal = db.scalar(
+        select(Proposal).where(
+            Proposal.cargo_id == cargo.id,
+            Proposal.trip_id == trip.id,
+            Proposal.status.notin_([ProposalStatus.REJECTED, ProposalStatus.CANCELED]),
+        )
+    )
+    if existing_proposal:
+        raise HTTPException(status_code=400, detail="You already have an active proposal for this trucker")
 
     proposal = Proposal(
         cargo_id=cargo.id,
@@ -165,6 +190,7 @@ async def respond_proposal(
         proposal.status = ProposalStatus.REJECTED
     else:
         finalize_acceptance(db, proposal)
+        await close_competing_proposals(db, proposal)
 
     db.commit()
     db.refresh(proposal)
@@ -207,6 +233,7 @@ async def accept_proposal(
         raise HTTPException(status_code=403, detail="Forbidden")
 
     finalize_acceptance(db, proposal)
+    await close_competing_proposals(db, proposal)
     db.commit()
     db.refresh(proposal)
     await push_proposal_update(proposal)
