@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -13,12 +14,23 @@ from app.models import (
     Cargo,
     CargoStatus,
     RefreshToken,
+    PayoutProvider,
     Role,
     Trip,
     TripStatus,
     User,
+    UserPayoutAccount,
 )
-from app.schemas import CreateUserRequest, LoginRequest, LoginResponse, RefreshTokenRequest, UserContextResponse
+from app.schemas import CreateUserRequest, LoginRequest, LoginResponse, PayoutAccountResponse, PayoutAccountUpsertRequest, RefreshTokenRequest, UserContextResponse
+from app.services.payouts import (
+    build_mercado_pago_connect_url,
+    build_payout_state,
+    exchange_mercado_pago_code,
+    test_mercado_pago_payout_channel,
+    upsert_manual_payout_account,
+    upsert_mercado_pago_account,
+    verify_payout_state,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -32,6 +44,24 @@ def _vehicle_payload(vehicle):
         "typeName": vehicle.type.name,
         "typeId": vehicle.type.id,
     }
+
+
+def _payout_payload(account: UserPayoutAccount) -> PayoutAccountResponse:
+    return PayoutAccountResponse(
+        id=account.id,
+        provider=account.provider,
+        status=account.status,
+        accountEmail=account.account_email,
+        pixKey=account.pix_key,
+        bankName=account.bank_name,
+        bankBranch=account.bank_branch,
+        bankAccount=account.bank_account,
+        bankAccountType=account.bank_account_type,
+        ownerName=account.owner_name,
+        oauthExpiresAt=account.oauth_expires_at,
+        createdAt=account.created_at,
+        updatedAt=account.updated_at,
+    )
 
 
 def build_user_context(db: Session, user: User) -> UserContextResponse:
@@ -78,6 +108,8 @@ def build_user_context(db: Session, user: User) -> UserContextResponse:
             "isDateFlexible": active_cargo.is_date_flexible,
         }
 
+    payout_account = db.scalar(select(UserPayoutAccount).where(UserPayoutAccount.user_id == user.id))
+
     return UserContextResponse(
         id=user.id,
         fullname=user.fullname,
@@ -86,6 +118,7 @@ def build_user_context(db: Session, user: User) -> UserContextResponse:
         accountStatus=user.account_status,
         activeTrip=trip_payload,
         activeCargo=cargo_payload,
+        payoutAccount=_payout_payload(payout_account) if payout_account else None,
     )
 
 
@@ -156,3 +189,73 @@ def signout(payload: RefreshTokenRequest, db: Session = Depends(get_db)) -> Resp
 @router.get("/me", response_model=UserContextResponse)
 def me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> UserContextResponse:
     return build_user_context(db, current_user)
+
+
+@router.get("/payout-account", response_model=PayoutAccountResponse | None)
+def get_payout_account(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    account = db.scalar(select(UserPayoutAccount).where(UserPayoutAccount.user_id == current_user.id))
+    return _payout_payload(account) if account else None
+
+
+@router.put("/payout-account", response_model=PayoutAccountResponse)
+def upsert_payout_account(
+    payload: PayoutAccountUpsertRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PayoutAccountResponse:
+    if payload.provider == PayoutProvider.MERCADO_PAGO:
+        raise HTTPException(status_code=400, detail="Use the Mercado Pago connect flow to link a payout account")
+
+    account = upsert_manual_payout_account(
+        db,
+        current_user,
+        provider=payload.provider,
+        pix_key=payload.pixKey,
+        bank_name=payload.bankName,
+        bank_branch=payload.bankBranch,
+        bank_account=payload.bankAccount,
+        bank_account_type=payload.bankAccountType,
+        owner_name=payload.ownerName,
+    )
+    db.commit()
+    db.refresh(account)
+    return _payout_payload(account)
+
+
+@router.get("/payout-account/mercado-pago/connect")
+def get_mercado_pago_connect_url(current_user: User = Depends(get_current_user)) -> dict[str, str]:
+    return {"connectUrl": build_mercado_pago_connect_url(build_payout_state(str(current_user.id)))}
+
+
+@router.post("/payout-account/mercado-pago/payout-test")
+async def test_mercado_pago_payout(current_user: User = Depends(get_current_user)) -> dict[str, str | bool]:
+    return await test_mercado_pago_payout_channel(current_user)
+
+
+@router.get("/payout-account/mercado-pago/callback")
+async def mercado_pago_connect_callback(
+    code: str,
+    state: str | None = None,
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    if not state:
+        raise HTTPException(status_code=400, detail="Missing OAuth state")
+
+    user_id = uuid.UUID(verify_payout_state(state))
+
+    user = db.scalar(select(User).where(User.id == user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    token_payload = await exchange_mercado_pago_code(code)
+    account = upsert_mercado_pago_account(
+        db,
+        user,
+        access_token=token_payload.get("access_token"),
+        refresh_token=token_payload.get("refresh_token"),
+        expires_in=token_payload.get("expires_in"),
+        account_email=token_payload.get("email"),
+    )
+    db.commit()
+    db.refresh(account)
+    return RedirectResponse(url="retornafrete://home?payout_connected=1", status_code=302)

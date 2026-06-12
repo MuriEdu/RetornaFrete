@@ -44,4 +44,5 @@ Before launch, make sure these are set:
 - `POST /api/proposals/{proposal_id}/payment/preference`
 - `POST /api/proposals/{proposal_id}/payment/sync`
 - `POST /api/proposals/{proposal_id}/payment/release`
+- `POST /api/proposals/{proposal_id}/payout/confirm`
 - `POST /api/payments/mercado-pago/webhook`

@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.models import AccountStatus, CargoStatus, FreightPaymentStatus, ProposalStatus, Role, TripStatus
+from app.models import AccountStatus, CargoStatus, FreightPaymentStatus, PayoutConnectionStatus, PayoutProvider, PayoutSettlementStatus, ProposalStatus, Role, TripStatus
 
 
 class ORMModel(BaseModel):
@@ -173,6 +173,7 @@ class UserContextResponse(BaseModel):
     accountStatus: AccountStatus
     activeTrip: TripResponse | None = None
     activeCargo: CargoResponse | None = None
+    payoutAccount: "PayoutAccountResponse | None" = None
 
 
 class LoginResponse(BaseModel):
@@ -216,12 +217,18 @@ class BidHistoryResponse(BaseModel):
 
 class ProposalPaymentSummaryResponse(BaseModel):
     amount: float
+    platformFeeAmount: float
+    totalAmount: float
+    estimatedTruckReceives: float
     status: FreightPaymentStatus
     provider: str
     providerStatus: str | None = None
     paidAt: datetime | None = None
     releasedAt: datetime | None = None
     deliveryCodeHint: str
+    payoutStatus: PayoutSettlementStatus | None = None
+    payoutMethod: PayoutProvider | None = None
+    payoutNetAmount: float | None = None
 
 
 class ProposalPaymentDetailsResponse(ProposalPaymentSummaryResponse):
@@ -253,3 +260,39 @@ class ProposalResponse(BaseModel):
     tripDate: date
     bidHistory: list[BidHistoryResponse]
     payment: ProposalPaymentSummaryResponse | None = None
+    platformFeePercent: float
+    platformFeeAmount: float
+    totalAmount: float
+    estimatedTruckReceives: float
+    truckerPayoutReady: bool
+    truckerPayoutConnected: bool
+    payoutStatus: PayoutSettlementStatus | None = None
+    payoutMethod: PayoutProvider | None = None
+    payoutNetAmount: float | None = None
+    payoutDestinationLabel: str | None = None
+
+
+class PayoutAccountResponse(BaseModel):
+    id: uuid.UUID
+    provider: PayoutProvider
+    status: PayoutConnectionStatus
+    accountEmail: EmailStr | None = None
+    pixKey: str | None = None
+    bankName: str | None = None
+    bankBranch: str | None = None
+    bankAccount: str | None = None
+    bankAccountType: str | None = None
+    ownerName: str | None = None
+    oauthExpiresAt: datetime | None = None
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class PayoutAccountUpsertRequest(BaseModel):
+    provider: PayoutProvider = PayoutProvider.MERCADO_PAGO
+    pixKey: str | None = None
+    bankName: str | None = None
+    bankBranch: str | None = None
+    bankAccount: str | None = None
+    bankAccountType: str | None = None
+    ownerName: str | None = None

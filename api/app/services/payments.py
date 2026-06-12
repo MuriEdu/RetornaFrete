@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import FreightPaymentStatus, Proposal, ProposalPayment, ProposalStatus
+from app.services.payouts import calculate_platform_fee, calculate_total_amount
 
 
 def mercado_pago_configured() -> bool:
@@ -54,11 +55,12 @@ def payment_status_from_mercado_pago(status: str | None) -> FreightPaymentStatus
     return FreightPaymentStatus.FAILED
 
 
-def _mercado_pago_headers() -> dict[str, str]:
-    if not mercado_pago_configured():
+def _mercado_pago_headers(access_token: str | None = None) -> dict[str, str]:
+    token = (access_token or settings.mercado_pago_access_token).strip()
+    if not token:
         raise HTTPException(status_code=503, detail="Mercado Pago is not configured")
     return {
-        "Authorization": f"Bearer {settings.mercado_pago_access_token}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 
@@ -103,10 +105,18 @@ def _apply_payment_payload(payment: ProposalPayment, payload: dict) -> ProposalP
     return payment
 
 
-async def create_checkout_preference(payment: ProposalPayment, proposal: Proposal, payer_email: str) -> ProposalPayment:
+async def create_checkout_preference(
+    payment: ProposalPayment,
+    proposal: Proposal,
+    payer_email: str,
+    *,
+    seller_access_token: str | None = None,
+) -> ProposalPayment:
     notification_url = settings.mercado_pago_notification_url.strip() or None
     if notification_url and settings.mercado_pago_webhook_secret.strip():
         notification_url = _append_query_params(notification_url, secret=settings.mercado_pago_webhook_secret.strip())
+    platform_fee = calculate_platform_fee(payment.amount)
+    total_amount = calculate_total_amount(payment.amount)
     body: dict = {
         "external_reference": payment.mercado_pago_external_reference,
         "notification_url": notification_url,
@@ -117,9 +127,10 @@ async def create_checkout_preference(payment: ProposalPayment, proposal: Proposa
                 "description": f"Pagamento antecipado do frete para {proposal.cargo.product_name}",
                 "quantity": 1,
                 "currency_id": "BRL",
-                "unit_price": float(Decimal(payment.amount)),
+                "unit_price": float(total_amount),
             }
         ],
+        "marketplace_fee": float(platform_fee),
         "payer": {"email": payer_email},
         "metadata": {
             "proposal_id": str(proposal.id),
@@ -139,7 +150,7 @@ async def create_checkout_preference(payment: ProposalPayment, proposal: Proposa
         body["auto_return"] = "approved"
 
     async with httpx.AsyncClient(base_url=settings.mercado_pago_base_url, timeout=20) as client:
-        response = await client.post("/checkout/preferences", headers=_mercado_pago_headers(), json=body)
+        response = await client.post("/checkout/preferences", headers=_mercado_pago_headers(seller_access_token), json=body)
 
     if response.status_code >= 400:
         detail = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text

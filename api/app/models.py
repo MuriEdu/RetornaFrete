@@ -3,7 +3,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Numeric, String, Text, Uuid
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, JSON, Numeric, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -20,6 +20,18 @@ class Role(str, enum.Enum):
 
 class AccountStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"
+
+
+class PayoutProvider(str, enum.Enum):
+    MERCADO_PAGO = "MERCADO_PAGO"
+    PIX = "PIX"
+    BANK = "BANK"
+
+
+class PayoutConnectionStatus(str, enum.Enum):
+    DISCONNECTED = "DISCONNECTED"
+    CONNECTED = "CONNECTED"
+    NEEDS_REAUTH = "NEEDS_REAUTH"
 
 
 class ProposalStatus(str, enum.Enum):
@@ -53,6 +65,12 @@ class FreightPaymentStatus(str, enum.Enum):
     CANCELED = "CANCELED"
 
 
+class PayoutSettlementStatus(str, enum.Enum):
+    READY_FOR_PAYOUT = "READY_FOR_PAYOUT"
+    PAID = "PAID"
+    FAILED = "FAILED"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -67,6 +85,7 @@ class User(Base):
     vehicles: Mapped[list["Vehicle"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     trips: Mapped[list["Trip"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     cargos: Mapped[list["Cargo"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    payout_account: Mapped["UserPayoutAccount | None"] = relationship(back_populates="user", cascade="all, delete-orphan", uselist=False)
 
 
 class RefreshToken(Base):
@@ -178,6 +197,7 @@ class Proposal(Base):
     current_bidder: Mapped["User"] = relationship(foreign_keys=[current_bidder_id])
     bids: Mapped[list["ProposalBid"]] = relationship(back_populates="proposal", cascade="all, delete-orphan", order_by="ProposalBid.created_at")
     payment: Mapped["ProposalPayment | None"] = relationship(back_populates="proposal", cascade="all, delete-orphan", uselist=False)
+    payout: Mapped["ProposalPayout | None"] = relationship(back_populates="proposal", cascade="all, delete-orphan", uselist=False)
 
 
 class ProposalBid(Base):
@@ -219,3 +239,55 @@ class ProposalPayment(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     proposal: Mapped["Proposal"] = relationship(back_populates="payment")
+
+
+class ProposalPayout(Base):
+    __tablename__ = "proposal_payouts"
+
+    id: Mapped[uuid.UUID] = uuid_column()
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"), nullable=False, unique=True, index=True)
+    provider: Mapped[PayoutProvider] = mapped_column(Enum(PayoutProvider), nullable=False)
+    status: Mapped[PayoutSettlementStatus] = mapped_column(
+        Enum(PayoutSettlementStatus),
+        default=PayoutSettlementStatus.READY_FOR_PAYOUT,
+        nullable=False,
+    )
+    gross_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    platform_fee_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    net_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    destination_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    released_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    proposal: Mapped["Proposal"] = relationship(back_populates="payout")
+
+
+class UserPayoutAccount(Base):
+    __tablename__ = "user_payout_accounts"
+
+    id: Mapped[uuid.UUID] = uuid_column()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    provider: Mapped[PayoutProvider] = mapped_column(Enum(PayoutProvider), nullable=False)
+    status: Mapped[PayoutConnectionStatus] = mapped_column(
+        Enum(PayoutConnectionStatus),
+        default=PayoutConnectionStatus.DISCONNECTED,
+        nullable=False,
+    )
+    account_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    oauth_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    oauth_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    oauth_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    pix_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    bank_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    bank_branch: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    bank_account: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    bank_account_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    owner_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user: Mapped["User"] = relationship(back_populates="payout_account")

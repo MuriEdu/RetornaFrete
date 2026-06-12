@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     mercado_pago_pending_url: str = Field(validation_alias="MERCADO_PAGO_PENDING_URL")
     mercado_pago_failure_url: str = Field(validation_alias="MERCADO_PAGO_FAILURE_URL")
     mercado_pago_webhook_secret: str = Field(default="", validation_alias="MERCADO_PAGO_WEBHOOK_SECRET")
+    mercado_pago_client_id: str = Field(default="", validation_alias="MERCADO_PAGO_CLIENT_ID")
+    mercado_pago_client_secret: str = Field(default="", validation_alias="MERCADO_PAGO_CLIENT_SECRET")
+    mercado_pago_oauth_redirect_uri: str = Field(default="", validation_alias="MERCADO_PAGO_OAUTH_REDIRECT_URI")
+    mercado_pago_payout_webhook_url: str = Field(default="", validation_alias="MERCADO_PAGO_PAYOUT_WEBHOOK_URL")
+    mercado_pago_payout_webhook_auth: str = Field(default="", validation_alias="MERCADO_PAGO_PAYOUT_WEBHOOK_AUTH")
+    platform_fee_percent: float = Field(default=10.0, validation_alias="PLATFORM_FEE_PERCENT")
+    platform_fee_minimum: float = Field(default=0.0, validation_alias="PLATFORM_FEE_MINIMUM")
 
     @property
     def cors_origin_list(self) -> list[str]:
